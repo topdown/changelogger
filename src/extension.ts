@@ -89,36 +89,43 @@ async function generateChangelog(gitRepoPath: string, changelogPath: string, isU
     // Get git log
     const log = await git.log();
     
-    // Get the last commit date from existing changelog if updating
-    let lastDate: Date | undefined;
-    if (isUpdate && fs.existsSync(changelogPath)) {
-        lastDate = getLastChangelogDate(changelogPath);
-    }
+    // Get existing commit messages to avoid duplication
+    const existingMessages = isUpdate && fs.existsSync(changelogPath) 
+        ? getExistingCommitMessages(changelogPath)
+        : new Set<string>();
     
-    // Filter commits based on last changelog date
-    const commits = lastDate 
-        ? log.all.filter(commit => new Date(commit.date) > lastDate!)
-        : log.all;
+    // Filter out commits that are already in the changelog
+    const newCommits = log.all.filter(commit => {
+        const message = commit.message.split('\n')[0].trim();
+        return !existingMessages.has(message);
+    });
     
-    if (commits.length === 0 && isUpdate) {
+    if (newCommits.length === 0 && isUpdate) {
         vscode.window.showInformationMessage('No new commits found since last changelog update.');
         return;
     }
     
     // Determine version for this changelog entry
-    const version = await determineVersion(gitRepoPath, commits, isUpdate);
+    const version = await determineVersion(gitRepoPath, newCommits, isUpdate);
     
     // Generate changelog content
-    const changelogContent = generateChangelogContent(commits, isUpdate, version);
+    const newChangelogContent = generateChangelogContent(newCommits, isUpdate, version);
     
     if (isUpdate && fs.existsSync(changelogPath)) {
-        // Prepend new content to existing changelog
+        // Read existing content
         const existingContent = fs.readFileSync(changelogPath, 'utf8');
-        const updatedContent = changelogContent + '\n' + existingContent;
+        
+        // Split content into header and entries
+        const headerMatch = existingContent.match(/^(#\s*Changelog\s*\n\s*[^\n]*\n\s*\n)?/);
+        const header = headerMatch ? headerMatch[0] : '';
+        const entries = existingContent.slice(header.length);
+        
+        // Combine content while preserving header
+        const updatedContent = header + newChangelogContent + entries;
         fs.writeFileSync(changelogPath, updatedContent);
     } else {
-        // Create new changelog
-        const fullContent = '# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n' + changelogContent;
+        // Create new changelog with header
+        const fullContent = '# Changelog\n\nAll notable changes to this project will be documented in this file.\n\n' + newChangelogContent;
         fs.writeFileSync(changelogPath, fullContent);
     }
 }
@@ -168,6 +175,7 @@ function generateChangelogContent(commits: readonly any[], isUpdate: boolean, ve
 function getLastChangelogDate(changelogPath: string): Date | undefined {
     try {
         const content = fs.readFileSync(changelogPath, 'utf8');
+        // Get the first (most recent) date in the changelog
         const dateMatch = content.match(/## \[.*?\] - (\d{4}-\d{2}-\d{2})/);
         if (dateMatch) {
             return new Date(dateMatch[1]);
@@ -176,6 +184,26 @@ function getLastChangelogDate(changelogPath: string): Date | undefined {
         console.error('Error reading changelog date:', error);
     }
     return undefined;
+}
+
+function getExistingCommitMessages(changelogPath: string): Set<string> {
+    try {
+        const content = fs.readFileSync(changelogPath, 'utf8');
+        const messages = new Set<string>();
+        
+        // Match all bullet points in the changelog
+        const bulletPoints = content.match(/^- .+$/gm);
+        if (bulletPoints) {
+            bulletPoints.forEach(point => {
+                messages.add(point.substring(2).trim()); // Remove "- " prefix
+            });
+        }
+        
+        return messages;
+    } catch (error) {
+        console.error('Error reading existing commit messages:', error);
+        return new Set<string>();
+    }
 }
 
 async function determineVersion(gitRepoPath: string, commits: readonly any[], isUpdate: boolean): Promise<string> {
