@@ -1,5 +1,5 @@
 {
-  "name": "changelogger",
+  "name": "vscode-changelogger",
   "displayName": "Change Logger",
   "description": "Automatically generate and update CHANGELOG.md from git commit history",
   "version": "0.0.1",
